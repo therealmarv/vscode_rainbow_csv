@@ -232,6 +232,11 @@
                 },
                 {
                     "when": "editorTextFocus && editorLangId =~ /dynamic csv|^[ct]sv/",
+                    "command": "rainbow-csv.OpenUrlUnderCursor",
+                    "group": "common@8"
+                },
+                {
+                    "when": "editorTextFocus && editorLangId =~ /dynamic csv|^[ct]sv/",
                     "command": "rainbow-csv.SetHeaderLine",
                     "group": "common@7"
                 },
@@ -508,6 +513,11 @@
                 "command": "rainbow-csv.GoToColumn",
                 "category": "Rainbow CSV",
                 "title": "Go to column"
+            },
+            {
+                "command": "rainbow-csv.OpenUrlUnderCursor",
+                "category": "Rainbow CSV",
+                "title": "Open CSV Field URL"
             }
         ],
         "semanticTokenScopes": [

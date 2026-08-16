@@ -924,20 +924,80 @@ function make_hover(document, language_id, position, cancellation_token) {
     if (!get_from_config('enable_tooltip', false)) {
         return;
     }
-    let [delim, policy, comment_prefix] = get_dialect(document);
-    let cursor_position_info = ll_rainbow_utils().get_cursor_position_info(vscode, document, delim, policy, comment_prefix, position);
-    if (!cursor_position_info || cancellation_token.isCancellationRequested)
-        return null;
-    let enable_tooltip_column_names = get_from_config('enable_tooltip_column_names', false);
-    let header = get_header(document, delim, policy, comment_prefix)[1];
-    if (!header) {
+    if (cancellation_token.isCancellationRequested) {
         return null;
     }
-    let [_full_text, short_report] = ll_rainbow_utils().format_cursor_position_info(cursor_position_info, header, enable_tooltip_column_names, /*show_comments=*/true, /*max_label_length=*/25);
+    let [delim, policy, comment_prefix] = get_dialect(document);
+    let url_info = ll_rainbow_utils().find_url_at_position(vscode, document, delim, policy, comment_prefix, position);
+    let cursor_position_info = ll_rainbow_utils().get_cursor_position_info(vscode, document, delim, policy, comment_prefix, position);
+    if (cancellation_token.isCancellationRequested)
+        return null;
+    let short_report = null;
+    if (cursor_position_info) {
+        let enable_tooltip_column_names = get_from_config('enable_tooltip_column_names', false);
+        let header = get_header(document, delim, policy, comment_prefix)[1];
+        if (header) {
+            short_report = ll_rainbow_utils().format_cursor_position_info(cursor_position_info, header, enable_tooltip_column_names, /*show_comments=*/true, /*max_label_length=*/25)[1];
+        }
+    }
+    if (!short_report && !url_info) {
+        return null;
+    }
     let mds = new vscode.MarkdownString();
     // Using a special pseudo-language grammar trick for highlighting the hover text using the same color as the column doesn't work anymore due to https://github.com/microsoft/vscode/issues/53723.
-    mds.appendText(short_report);
+    if (short_report) {
+        mds.appendText(short_report);
+    }
+    if (url_info) {
+        if (short_report) {
+            mds.appendMarkdown('\n\n');
+        }
+        let markdown_url = url_info.url.replace(/\(/g, '%28').replace(/\)/g, '%29');
+        mds.appendMarkdown(`[Open CSV Field URL](${markdown_url})`);
+    }
     return new vscode.Hover(mds);
+}
+
+
+async function open_url_under_cursor(options=null) {
+    let active_editor = get_active_editor();
+    let position = active_editor ? ll_rainbow_utils().get_cursor_position_if_unambiguous(active_editor) : null;
+    if (!active_editor || !position) {
+        if (!options || !options.integration_test) {
+            vscode.window.showInformationMessage('Rainbow CSV: Place a single cursor inside a URL first.');
+        }
+        return null;
+    }
+    let document = active_editor.document;
+    let [delim, policy, comment_prefix] = get_dialect(document);
+    let url_info = ll_rainbow_utils().find_url_at_position(vscode, document, delim, policy, comment_prefix, position);
+    if (!url_info) {
+        if (!options || !options.integration_test) {
+            vscode.window.showInformationMessage('Rainbow CSV: No URL found under the cursor.');
+        }
+        return null;
+    }
+    if (options && options.integration_test) {
+        return url_info.url;
+    }
+    let opened_url = await try_open_url(url_info.url);
+    if (!opened_url) {
+        vscode.window.showWarningMessage(`Rainbow CSV: Unable to open ${url_info.url}`);
+    }
+    return opened_url;
+}
+
+
+async function try_open_url(url, open_external=null) {
+    try {
+        let opener = open_external || vscode.env.openExternal;
+        return await opener(vscode.Uri.parse(url)) ? url : null;
+    } catch (error) {
+        if (extension_context.logging_enabled && debug_log_output_channel) {
+            debug_log_output_channel.error(`Rainbow CSV: URL opener failed: ${String(error)}`);
+        }
+        return null;
+    }
 }
 
 
@@ -2693,7 +2753,7 @@ async function go_to_column(integration_test_options=null) {
 
     if (!column_number_str) {
         return;
-    } 
+    }
 
     const target_column = parseInt(column_number_str) - 1; // Convert to 0-based index
     const current_position = editor.selection.active;
@@ -2785,6 +2845,7 @@ async function activate(context) {
     var markdown_copy_cmd = vscode.commands.registerCommand('rainbow-csv.MarkdownCopy', async function() { await markdown_copy(); });
     var internal_test_cmd = vscode.commands.registerCommand('rainbow-csv.InternalTest', run_internal_test_cmd);
     var go_to_column_cmd = vscode.commands.registerCommand('rainbow-csv.GoToColumn', go_to_column);
+    var open_url_under_cursor_cmd = vscode.commands.registerCommand('rainbow-csv.OpenUrlUnderCursor', open_url_under_cursor);
 
     // INFO: vscode.workspace and vscode.window lifetime are likely guaranteed to cover the extension lifetime (period between activate() and deactivate()) but I haven't found a confirmation yet.
     var doc_open_event = vscode.workspace.onDidOpenTextDocument(handle_doc_open);
@@ -2839,6 +2900,7 @@ async function activate(context) {
     context.subscriptions.push(markdown_copy_cmd);
     context.subscriptions.push(internal_test_cmd);
     context.subscriptions.push(go_to_column_cmd);
+    context.subscriptions.push(open_url_under_cursor_cmd);
 
     context.subscriptions.push(doc_open_event);
     context.subscriptions.push(doc_close_event);
@@ -2868,3 +2930,4 @@ exports.deactivate = deactivate;
 // Exports just for unit tests:
 exports.autodetect_dialect_frequency_based = autodetect_dialect_frequency_based;
 exports.try_autodetect_and_set_rainbow_filetype = try_autodetect_and_set_rainbow_filetype;
+exports.try_open_url = try_open_url;

@@ -553,6 +553,44 @@ async function test_excel_copy(test_folder_uri) {
 }
 
 
+async function test_url_fallbacks() {
+    let expected_url = 'https://example.com/images/sample.jpg';
+    let content = `3005,${expected_url},sample-image.jpg`;
+    let active_doc = await vscode.workspace.openTextDocument({language: 'csv', content});
+    let editor = await vscode.window.showTextDocument(active_doc);
+    let url_position = new vscode.Position(0, content.indexOf(expected_url) + 8);
+    editor.selection = new vscode.Selection(url_position, url_position);
+
+    let command_result = await vscode.commands.executeCommand('rainbow-csv.OpenUrlUnderCursor', {integration_test: true});
+    assert.equal(expected_url, command_result);
+
+    let hovers = await vscode.commands.executeCommand('vscode.executeHoverProvider', active_doc.uri, url_position);
+    let hover_values = [];
+    for (let hover of hovers) {
+        for (let content_item of hover.contents) {
+            hover_values.push(typeof content_item == 'string' ? content_item : content_item.value);
+        }
+    }
+    assert(hover_values.some(value => value.includes(`[Open CSV Field URL](${expected_url})`)));
+
+    let separator_position = new vscode.Position(0, content.indexOf(expected_url) + expected_url.length);
+    editor.selection = new vscode.Selection(separator_position, separator_position);
+    command_result = await vscode.commands.executeCommand('rainbow-csv.OpenUrlUnderCursor', {integration_test: true});
+    assert.equal(null, command_result);
+
+    let opened_target = null;
+    let open_result = await extension.try_open_url(expected_url, async function(target) {
+        opened_target = target.toString();
+        return true;
+    });
+    assert.equal(expected_url, open_result);
+    assert.equal(expected_url, opened_target);
+    assert.equal(null, await extension.try_open_url(expected_url, async function(_target) { return false; }));
+    assert.equal(null, await extension.try_open_url(expected_url, async function(_target) { throw new Error('test opener failure'); }));
+    log_message('test_url_fallbacks passed');
+}
+
+
 async function test_dynamic_csv(test_folder_uri) {
     let uri = vscode.Uri.joinPath(test_folder_uri, 'csv_files', 'movies_multichar_separator.txt');
     let active_doc = await vscode.workspace.openTextDocument(uri);
@@ -1104,6 +1142,8 @@ async function run() {
         await test_manual_enable_disable(test_folder_uri);
 
         await test_go_to_column(test_folder_uri);
+
+        await test_url_fallbacks();
 
         await test_markdown_copy(test_folder_uri);
         await test_excel_copy(test_folder_uri);

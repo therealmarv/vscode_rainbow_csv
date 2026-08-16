@@ -43,11 +43,15 @@ class VscodeDocumentTestDouble {
         this.version = 1;
         this.languageId = language_id;
         this.uri = new UriTestDouble(scheme);
+        this.line_at_calls = [];
+        this.get_text_calls = 0;
     }
     lineAt(lnum) {
+        this.line_at_calls.push(lnum);
         return {text: this.lines_buffer[lnum]};
     }
     getText() {
+        this.get_text_calls += 1;
         return this.lines_buffer.join('\n');
     }
 }
@@ -2138,6 +2142,83 @@ function test_get_cursor_position_info() {
 }
 
 
+function test_find_url_at_position() {
+    let sample_url = 'https://example.com/images/sample.jpg';
+    let sample_line = `3005,${sample_url},sample-image.jpg`;
+    let active_doc = new VscodeDocumentTestDouble([sample_line]);
+    let url_info = rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, 10));
+    assert.equal(sample_url, url_info.url);
+    assert.deepEqual(vr(0, 5, 0, 5 + sample_url.length), url_info.range);
+    assert.equal(0, active_doc.get_text_calls);
+    assert(active_doc.line_at_calls.every(lnum => lnum == 0));
+
+    let first_url = 'https://example.com/one';
+    let second_url = 'https://example.com/two';
+    active_doc = new VscodeDocumentTestDouble([`${first_url},${second_url}`]);
+    assert.equal(first_url, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, 8)).url);
+    assert.equal(second_url, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, first_url.length + 8)).url);
+    assert.equal(null, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, first_url.length)));
+
+    let quoted_url = 'https://example.com/image,large.jpg?size=2#preview';
+    active_doc = new VscodeDocumentTestDouble([`1,"${quoted_url}",done`]);
+    url_info = rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, 15));
+    assert.equal(quoted_url, url_info.url);
+    assert.deepEqual(vr(0, 3, 0, 3 + quoted_url.length), url_info.range);
+
+    let dialect_cases = [
+        [';', 'quoted', `1;${first_url};done`],
+        ['|', 'simple', `1|${first_url}|done`],
+        ['\t', 'simple', `1\t${first_url}\tdone`],
+        [' ', 'whitespace', `1   ${first_url}   done`],
+        ['@@', 'simple', `1@@${first_url}@@done`]
+    ];
+    for (let [delim, policy, line] of dialect_cases) {
+        active_doc = new VscodeDocumentTestDouble([line]);
+        let url_start = line.indexOf(first_url);
+        url_info = rainbow_utils.find_url_at_position(vscode_test_double, active_doc, delim, policy, '', new VscodePositionTestDouble(0, url_start + 8));
+        assert.equal(first_url, url_info.url);
+        assert.deepEqual(vr(0, url_start, 0, url_start + first_url.length), url_info.range);
+    }
+
+    active_doc = new VscodeDocumentTestDouble([`1,See ${first_url} and ${second_url}.,done`]);
+    assert.equal(first_url, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, 12)).url);
+    url_info = rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, 40));
+    assert.equal(second_url, url_info.url);
+    assert.equal(null, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, 2)));
+
+    let punctuation_url = 'https://example.com/item;';
+    active_doc = new VscodeDocumentTestDouble([`1,"${punctuation_url}",done`]);
+    assert.equal(punctuation_url, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, 10)).url);
+
+    let closing_brackets = ')'.repeat(50000);
+    active_doc = new VscodeDocumentTestDouble([`1,See ${first_url}${closing_brackets} here,done`]);
+    assert.equal(first_url, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, 12)).url);
+
+    active_doc = new VscodeDocumentTestDouble([`# ${first_url}`, `1,${first_url}`]);
+    assert.equal(null, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '#', new VscodePositionTestDouble(0, 5)));
+
+    active_doc = new VscodeDocumentTestDouble([
+        'id,url',
+        '1,"prefix',
+        quoted_url,
+        'suffix",done'
+    ]);
+    url_info = rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted_rfc', '', new VscodePositionTestDouble(2, 10));
+    assert.equal(quoted_url, url_info.url);
+
+    let deep_rfc_lines = Array(25).fill('value,other');
+    deep_rfc_lines.push(`1,${first_url}`);
+    active_doc = new VscodeDocumentTestDouble(deep_rfc_lines);
+    assert.equal(first_url, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted_rfc', '', new VscodePositionTestDouble(25, 10)).url);
+
+    let oversized_line = `1,${'x'.repeat(1000001)}${first_url}`;
+    active_doc = new VscodeDocumentTestDouble([oversized_line]);
+    assert.equal(null, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, oversized_line.length - 5)));
+    assert.equal(1, active_doc.line_at_calls.length);
+    assert.equal(0, active_doc.get_text_calls);
+}
+
+
 function test_align_columns() {
     let [unaligned_doc_lines, active_doc, delim, policy, comment_prefix] = [null, null, null, null, null];
     let [column_stats, first_failed_line, records, comments] = [null, null, null, null];
@@ -2710,6 +2791,7 @@ function test_all() {
     test_sample_preview_records_from_context();
     test_show_lint_status_bar_button();
     test_get_cursor_position_info();
+    test_find_url_at_position();
     test_record_comment_merger();
     test_generate_column_edit_selections();
 }
