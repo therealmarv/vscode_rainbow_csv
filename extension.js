@@ -928,8 +928,9 @@ function make_hover(document, language_id, position, cancellation_token) {
         return null;
     }
     let [delim, policy, comment_prefix] = get_dialect(document);
-    let url_info = ll_rainbow_utils().find_url_at_position(vscode, document, delim, policy, comment_prefix, position);
-    let cursor_position_info = ll_rainbow_utils().get_cursor_position_info(vscode, document, delim, policy, comment_prefix, position);
+    let line_text = document.lineAt(position.line).text;
+    let url_info = /https?:\/\//i.test(line_text) ? ll_rainbow_utils().find_url_at_position(vscode, document, delim, policy, comment_prefix, position) : null;
+    let cursor_position_info = url_info ? url_info.cursor_position_info : ll_rainbow_utils().get_cursor_position_info(vscode, document, delim, policy, comment_prefix, position);
     if (cancellation_token.isCancellationRequested)
         return null;
     let short_report = null;
@@ -989,9 +990,13 @@ async function open_url_under_cursor(options=null) {
 
 
 async function try_open_url(url, open_external=null) {
+    let normalized_url = ll_rainbow_utils().normalize_http_url(url);
+    if (!normalized_url) {
+        return null;
+    }
     try {
         let opener = open_external || vscode.env.openExternal;
-        return await opener(vscode.Uri.parse(url)) ? url : null;
+        return await opener(vscode.Uri.parse(normalized_url, /*strict=*/true)) ? normalized_url : null;
     } catch (error) {
         if (extension_context.logging_enabled && debug_log_output_channel) {
             debug_log_output_channel.error(`Rainbow CSV: URL opener failed: ${String(error)}`);
@@ -2861,11 +2866,9 @@ async function activate(context) {
 
     restart_extension_config();
 
-    if (get_from_config('enable_tooltip', false)) {
-        for (let language_id in dialect_map) {
-            if (dialect_map.hasOwnProperty(language_id)) {
-                register_csv_hover_info_provider(language_id, context);
-            }
+    for (let language_id in dialect_map) {
+        if (dialect_map.hasOwnProperty(language_id)) {
+            register_csv_hover_info_provider(language_id, context);
         }
     }
 

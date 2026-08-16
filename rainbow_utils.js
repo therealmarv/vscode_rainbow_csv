@@ -18,8 +18,8 @@ const number_regex = /^([0-9]+)(\.[0-9]+)?$/;
 const QUOTED_RFC_POLICY = 'quoted_rfc';
 const QUOTED_POLICY = 'quoted';
 const max_preview_field_length = 250;
-const url_rfc_margin = 20;
 const max_url_scan_chars = 1000000;
+const max_url_length = 8192;
 
 
 class AssertionError extends Error {}
@@ -1160,49 +1160,40 @@ function find_urls_in_text(vscode, text, text_range) {
                 }
             }
         }
-        if (end <= url_begin_regex.lastIndex) {
+        let url = normalize_http_url(text.substring(begin, end));
+        if (end <= url_begin_regex.lastIndex || !url) {
             continue;
         }
         let range = new vscode.Range(text_range.start.line, text_range.start.character + begin, text_range.start.line, text_range.start.character + end);
-        result.push({url: text.substring(begin, end), range});
+        result.push({url, range});
         url_begin_regex.lastIndex = end;
     }
     return result;
 }
 
 
-function find_url_at_position(vscode, document, delim, policy, comment_prefix, position) {
-    if (!delim || !policy || !position || position.line < 0 || position.line >= document.lineCount) {
+function normalize_http_url(url) {
+    if (!url || url.length > max_url_length || !/^https?:\/\/[^/?#]/i.test(url)) {
         return null;
     }
-
-    let parsing_range = new vscode.Range(position.line, 0, position.line, 0);
-    if (policy == QUOTED_RFC_POLICY) {
-        let begin_line = Math.max(0, position.line - url_rfc_margin);
-        let record_start_line = null;
-        for (let lnum = position.line; lnum >= begin_line; lnum--) {
-            let line_text = document.lineAt(lnum).text;
-            if ((line_text.split('"').length - 1) % 2 && is_opening_rfc_line(line_text, delim)) {
-                record_start_line = lnum;
-                break;
-            }
-        }
-        if (record_start_line === null) {
-            record_start_line = begin_line == 0 ? 0 : position.line;
-        }
-        let end_line = Math.min(document.lineCount - 1, position.line + url_rfc_margin);
-        parsing_range = new vscode.Range(record_start_line, 0, end_line, 0);
-    }
-
-    let num_chars_to_parse = 0;
-    for (let lnum = parsing_range.start.line; lnum <= parsing_range.end.line; lnum++) {
-        num_chars_to_parse += document.lineAt(lnum).text.length;
-        if (num_chars_to_parse > max_url_scan_chars) {
+    try {
+        let parsed_url = new URL(url);
+        if (!['http:', 'https:'].includes(parsed_url.protocol) || !parsed_url.hostname || parsed_url.href.length > max_url_length) {
             return null;
         }
+        return parsed_url.href;
+    } catch (_error) {
+        return null;
     }
+}
 
-    let row_infos = parse_document_range(vscode, document, delim, /*include_delim_length_in_ranges=*/false, policy, comment_prefix, parsing_range)[0];
+
+function is_valid_http_url(url) {
+    return normalize_http_url(url) !== null;
+}
+
+
+function find_url_in_row_infos(vscode, row_infos, position) {
     for (let row_info of row_infos) {
         if (row_info.comment_range !== null) {
             continue;
@@ -1216,6 +1207,7 @@ function find_url_at_position(vscode, document, delim, policy, comment_prefix, p
                 let field_text = row_info.record_fields[field_num][component_num];
                 for (let url_info of find_urls_in_text(vscode, field_text, field_range)) {
                     if (position.character >= url_info.range.start.character && position.character < url_info.range.end.character) {
+                        url_info.cursor_position_info = {column_number: field_num, total_columns: row_info.record_ranges.length, split_warning: false};
                         return url_info;
                     }
                 }
@@ -1224,6 +1216,30 @@ function find_url_at_position(vscode, document, delim, policy, comment_prefix, p
         }
     }
     return null;
+}
+
+
+function find_url_at_position(vscode, document, delim, policy, comment_prefix, position) {
+    if (!delim || !policy || !position || position.line < 0 || position.line >= document.lineCount) {
+        return null;
+    }
+    if (policy == QUOTED_RFC_POLICY) {
+        // RFC records can require unbounded document context, so URL actions stay single-line only.
+        return null;
+    }
+
+    let parsing_range = new vscode.Range(position.line, 0, position.line, 0);
+
+    let num_chars_to_parse = 0;
+    for (let lnum = parsing_range.start.line; lnum <= parsing_range.end.line; lnum++) {
+        num_chars_to_parse += document.lineAt(lnum).text.length;
+        if (num_chars_to_parse > max_url_scan_chars) {
+            return null;
+        }
+    }
+
+    let row_infos = parse_document_range(vscode, document, delim, /*include_delim_length_in_ranges=*/false, policy, comment_prefix, parsing_range)[0];
+    return find_url_in_row_infos(vscode, row_infos, position);
 }
 
 
@@ -1433,6 +1449,8 @@ module.exports.assert = assert;
 module.exports.get_field_by_line_position = get_field_by_line_position;
 module.exports.get_cursor_position_info = get_cursor_position_info;
 module.exports.find_url_at_position = find_url_at_position;
+module.exports.is_valid_http_url = is_valid_http_url;
+module.exports.normalize_http_url = normalize_http_url;
 module.exports.format_cursor_position_info = format_cursor_position_info;
 module.exports.parse_document_range = parse_document_range;
 module.exports.parse_document_range_single_line = parse_document_range_single_line;

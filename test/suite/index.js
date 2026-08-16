@@ -564,14 +564,31 @@ async function test_url_fallbacks() {
     let command_result = await vscode.commands.executeCommand('rainbow-csv.OpenUrlUnderCursor', {integration_test: true});
     assert.equal(expected_url, command_result);
 
-    let hovers = await vscode.commands.executeCommand('vscode.executeHoverProvider', active_doc.uri, url_position);
-    let hover_values = [];
-    for (let hover of hovers) {
-        for (let content_item of hover.contents) {
-            hover_values.push(typeof content_item == 'string' ? content_item : content_item.value);
+    function get_hover_values(hovers) {
+        let hover_values = [];
+        for (let hover of hovers) {
+            for (let content_item of hover.contents) {
+                hover_values.push(typeof content_item == 'string' ? content_item : content_item.value);
+            }
         }
+        return hover_values;
     }
+    let hovers = await vscode.commands.executeCommand('vscode.executeHoverProvider', active_doc.uri, url_position);
+    let hover_values = get_hover_values(hovers);
     assert(hover_values.some(value => value.includes(`[Open CSV Field URL](${expected_url})`)));
+
+    let config = vscode.workspace.getConfiguration('rainbow_csv');
+    let original_global_tooltip_setting = config.inspect('enable_tooltip').globalValue;
+    try {
+        await config.update('enable_tooltip', false, vscode.ConfigurationTarget.Global);
+        hovers = await vscode.commands.executeCommand('vscode.executeHoverProvider', active_doc.uri, url_position);
+        assert(!get_hover_values(hovers).some(value => value.includes('[Open CSV Field URL]')));
+        await config.update('enable_tooltip', true, vscode.ConfigurationTarget.Global);
+        hovers = await vscode.commands.executeCommand('vscode.executeHoverProvider', active_doc.uri, url_position);
+        assert(get_hover_values(hovers).some(value => value.includes(`[Open CSV Field URL](${expected_url})`)));
+    } finally {
+        await config.update('enable_tooltip', original_global_tooltip_setting, vscode.ConfigurationTarget.Global);
+    }
 
     let separator_position = new vscode.Position(0, content.indexOf(expected_url) + expected_url.length);
     editor.selection = new vscode.Selection(separator_position, separator_position);
@@ -587,6 +604,12 @@ async function test_url_fallbacks() {
     assert.equal(expected_url, opened_target);
     assert.equal(null, await extension.try_open_url(expected_url, async function(_target) { return false; }));
     assert.equal(null, await extension.try_open_url(expected_url, async function(_target) { throw new Error('test opener failure'); }));
+    let invalid_opener_called = false;
+    assert.equal(null, await extension.try_open_url('https:///path', async function(_target) {
+        invalid_opener_called = true;
+        return true;
+    }));
+    assert.equal(false, invalid_opener_called);
     log_message('test_url_fallbacks passed');
 }
 
@@ -1177,6 +1200,7 @@ async function run() {
         log_message('Error: tests have failed. Exception:');
         log_message(String(e));
         log_message(String(e.stack));
+        throw e;
     }
 }
 

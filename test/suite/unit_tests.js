@@ -2149,6 +2149,7 @@ function test_find_url_at_position() {
     let url_info = rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, 10));
     assert.equal(sample_url, url_info.url);
     assert.deepEqual(vr(0, 5, 0, 5 + sample_url.length), url_info.range);
+    assert.deepEqual({column_number: 1, total_columns: 3, split_warning: false}, url_info.cursor_position_info);
     assert.equal(0, active_doc.get_text_calls);
     assert(active_doc.line_at_calls.every(lnum => lnum == 0));
 
@@ -2180,6 +2181,17 @@ function test_find_url_at_position() {
         assert.deepEqual(vr(0, url_start, 0, url_start + first_url.length), url_info.range);
     }
 
+    let quoted_multichar_url = 'https://example.com/a@@b';
+    let quoted_multichar_line = `1@@"${quoted_multichar_url}"@@done`;
+    active_doc = new VscodeDocumentTestDouble([quoted_multichar_line]);
+    url_info = rainbow_utils.find_url_at_position(vscode_test_double, active_doc, '@@', 'quoted', '', new VscodePositionTestDouble(0, 10));
+    assert.equal(quoted_multichar_url, url_info.url);
+    assert.deepEqual({column_number: 1, total_columns: 3, split_warning: false}, url_info.cursor_position_info);
+
+    let spaced_multichar_line = `1  "${first_url}"  done`;
+    active_doc = new VscodeDocumentTestDouble([spaced_multichar_line]);
+    assert.equal(first_url, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, '  ', 'quoted', '', new VscodePositionTestDouble(0, 8)).url);
+
     active_doc = new VscodeDocumentTestDouble([`1,See ${first_url} and ${second_url}.,done`]);
     assert.equal(first_url, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, 12)).url);
     url_info = rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, 40));
@@ -2197,19 +2209,19 @@ function test_find_url_at_position() {
     active_doc = new VscodeDocumentTestDouble([`# ${first_url}`, `1,${first_url}`]);
     assert.equal(null, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '#', new VscodePositionTestDouble(0, 5)));
 
-    active_doc = new VscodeDocumentTestDouble([
-        'id,url',
-        '1,"prefix',
-        quoted_url,
-        'suffix",done'
-    ]);
-    url_info = rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted_rfc', '', new VscodePositionTestDouble(2, 10));
-    assert.equal(quoted_url, url_info.url);
+    for (let invalid_url of ['https:///path', 'https://?query', 'https://exa[mple.com']) {
+        active_doc = new VscodeDocumentTestDouble([`1,${invalid_url},done`]);
+        assert.equal(null, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, 5)));
+        assert.equal(false, rainbow_utils.is_valid_http_url(invalid_url));
+    }
+    assert.equal(false, rainbow_utils.is_valid_http_url(`https://example.com/${'x'.repeat(8192)}`));
+    let ambiguous_url = 'https://trusted.example\\@evil.example/path';
+    let normalized_url = rainbow_utils.normalize_http_url(ambiguous_url);
+    assert.equal('trusted.example', new URL(normalized_url).hostname);
+    assert.equal(normalized_url, rainbow_utils.find_url_at_position(vscode_test_double, new VscodeDocumentTestDouble([`1,${ambiguous_url},done`]), ',', 'quoted', '', new VscodePositionTestDouble(0, 8)).url);
 
-    let deep_rfc_lines = Array(25).fill('value,other');
-    deep_rfc_lines.push(`1,${first_url}`);
-    active_doc = new VscodeDocumentTestDouble(deep_rfc_lines);
-    assert.equal(first_url, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted_rfc', '', new VscodePositionTestDouble(25, 10)).url);
+    active_doc = new VscodeDocumentTestDouble([`1,${first_url},done`]);
+    assert.equal(null, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted_rfc', '', new VscodePositionTestDouble(0, 8)));
 
     let oversized_line = `1,${'x'.repeat(1000001)}${first_url}`;
     active_doc = new VscodeDocumentTestDouble([oversized_line]);

@@ -18,13 +18,13 @@ function extract_next_field(src, dlm, preserve_quotes_and_whitespaces, allow_ext
     let match_obj = rgx.exec(src_cur);
     if (match_obj !== null) {
         let match_end = match_obj[0].length;
-        if (cidx + match_end == src.length || src[cidx + match_end] == dlm) {
+        if (cidx + match_end == src.length || src.startsWith(dlm, cidx + match_end)) {
             if (preserve_quotes_and_whitespaces) {
                 result.push(match_obj[0]);
             } else {
                 result.push(match_obj[1].replace(/""/g, '"'));
             }
-            return [cidx + match_end + 1, false];
+            return [cidx + match_end + dlm.length, false];
         }
         warning = true;
     }
@@ -34,24 +34,26 @@ function extract_next_field(src, dlm, preserve_quotes_and_whitespaces, allow_ext
     var field = src.substring(cidx, uidx);
     warning = warning || field.indexOf('"') != -1;
     result.push(field);
-    return [uidx + 1, warning];
+    return [uidx + dlm.length, warning];
 }
 
 
 function split_quoted_str(src, dlm, preserve_quotes_and_whitespaces=false) {
     // This function is newline-agnostic i.e. it can also split records with multiline fields.
+    if (!dlm)
+        return [[src], false];
     if (src.indexOf('"') == -1) // Optimization for most common case
         return [src.split(dlm), false];
     var result = [];
     var cidx = 0;
     var warning = false;
-    let allow_external_whitespaces = dlm != ' ';
+    let allow_external_whitespaces = dlm.indexOf(' ') == -1;
     while (cidx < src.length) {
         var extraction_report = extract_next_field(src, dlm, preserve_quotes_and_whitespaces, allow_external_whitespaces, cidx, result);
         cidx = extraction_report[0];
         warning = warning || extraction_report[1];
     }
-    if (src.charAt(src.length - 1) == dlm)
+    if (src.endsWith(dlm))
         result.push('');
     return [result, warning];
 }
