@@ -1193,6 +1193,11 @@ function is_valid_http_url(url) {
 }
 
 
+function is_url_lookup_safe_line(line_text) {
+    return line_text.length <= max_url_scan_chars;
+}
+
+
 function find_url_in_row_infos(vscode, row_infos, position) {
     for (let row_info of row_infos) {
         if (row_info.comment_range !== null) {
@@ -1228,16 +1233,11 @@ function find_url_at_position(vscode, document, delim, policy, comment_prefix, p
         return null;
     }
 
-    let parsing_range = new vscode.Range(position.line, 0, position.line, 0);
-
-    let num_chars_to_parse = 0;
-    for (let lnum = parsing_range.start.line; lnum <= parsing_range.end.line; lnum++) {
-        num_chars_to_parse += document.lineAt(lnum).text.length;
-        if (num_chars_to_parse > max_url_scan_chars) {
-            return null;
-        }
+    if (!is_url_lookup_safe_line(document.lineAt(position.line).text)) {
+        return null;
     }
 
+    let parsing_range = new vscode.Range(position.line, 0, position.line, 0);
     let row_infos = parse_document_range(vscode, document, delim, /*include_delim_length_in_ranges=*/false, policy, comment_prefix, parsing_range)[0];
     return find_url_in_row_infos(vscode, row_infos, position);
 }
@@ -1451,6 +1451,7 @@ module.exports.get_cursor_position_info = get_cursor_position_info;
 module.exports.find_url_at_position = find_url_at_position;
 module.exports.is_valid_http_url = is_valid_http_url;
 module.exports.normalize_http_url = normalize_http_url;
+module.exports.is_url_lookup_safe_line = is_url_lookup_safe_line;
 module.exports.format_cursor_position_info = format_cursor_position_info;
 module.exports.parse_document_range = parse_document_range;
 module.exports.parse_document_range_single_line = parse_document_range_single_line;

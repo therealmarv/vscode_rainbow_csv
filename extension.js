@@ -929,6 +929,9 @@ function make_hover(document, language_id, position, cancellation_token) {
     }
     let [delim, policy, comment_prefix] = get_dialect(document);
     let line_text = document.lineAt(position.line).text;
+    if (!ll_rainbow_utils().is_url_lookup_safe_line(line_text)) {
+        return null;
+    }
     let url_info = /https?:\/\//i.test(line_text) ? ll_rainbow_utils().find_url_at_position(vscode, document, delim, policy, comment_prefix, position) : null;
     let cursor_position_info = url_info ? url_info.cursor_position_info : ll_rainbow_utils().get_cursor_position_info(vscode, document, delim, policy, comment_prefix, position);
     if (cancellation_token.isCancellationRequested)

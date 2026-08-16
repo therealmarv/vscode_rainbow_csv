@@ -2228,6 +2228,8 @@ function test_find_url_at_position() {
     assert.equal(null, rainbow_utils.find_url_at_position(vscode_test_double, active_doc, ',', 'quoted', '', new VscodePositionTestDouble(0, oversized_line.length - 5)));
     assert.equal(1, active_doc.line_at_calls.length);
     assert.equal(0, active_doc.get_text_calls);
+    assert.equal(true, rainbow_utils.is_url_lookup_safe_line('x'.repeat(1000000)));
+    assert.equal(false, rainbow_utils.is_url_lookup_safe_line('x'.repeat(1000001)));
 }
 
 
